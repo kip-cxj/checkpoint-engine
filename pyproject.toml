@@ -1,0 +1,32 @@
+[project]
+name = "checkpoint-engine"
+dynamic = ["version"]
+description = "checkpoint-engine is a lightweight, decoupling and efficient weight update middleware"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "torch>=2.5.0",
+    "fastapi",
+    "pydantic",
+    "safetensors",
+    "pyzmq",
+    "uvicorn",
+    "loguru",
+    "numpy",
+]
+
+[project.optional-dependencies]
+p2p = [
+    "mooncake-transfer-engine",
+]
+
+[build-system]
+requires = ["setuptools", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["checkpoint_engine"]
+
+[tool.setuptools_scm]
+version_file = "checkpoint_engine/_version.py"
