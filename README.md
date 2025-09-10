@@ -65,7 +65,7 @@ pip install checkpoint-engine
 Use the flexible P2P implementation, notice this will install `mooncake-transfer-engine` to support RDMA transfer between different ranks.
 
 ```Bash
-pip install checkpoint-engine[p2p]
+pip install 'checkpoint-engine[p2p]'
 ```
 
 If set `NCCL_IB_HCA` env, checkpoint-engine will use it to auto select net devices for different ranks. If not set, it will read all RDMA devices and try to divide them into each rank.
@@ -84,7 +84,7 @@ VLLM_USE_PRECOMPILED=1 uv pip install --editable .
 Install checkpoint-engine
 
 ```Bash
-uv pip install checkpoint-engine[p2p]
+uv pip install 'checkpoint-engine[p2p]'
 ```
 
 We use `Qwen/Qwen3-235B-A22B-Instruct-2507` (BF16) as the test model
