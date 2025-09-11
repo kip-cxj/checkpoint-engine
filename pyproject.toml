@@ -30,3 +30,9 @@ include = ["checkpoint_engine"]
 
 [tool.setuptools_scm]
 version_file = "checkpoint_engine/_version.py"
+
+[project.urls]
+Homepage = "https://github.com/MoonshotAI/checkpoint-engine"
+Repository = "https://github.com/MoonshotAI/checkpoint-engine"
+Documentation = "https://github.com/MoonshotAI/checkpoint-engine"
+"Issue Tracker" = "https://github.com/MoonshotAI/checkpoint-engine/issues"
