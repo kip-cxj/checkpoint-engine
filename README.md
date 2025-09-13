@@ -18,7 +18,7 @@ The core weight update logic is in `ParameterServer` class, a service colocated 
 - **P2P**: Used when new inference instances are dynamically added (due to restarts or dynamic availability) while the existing instances are already serving requests. Under this scenario, to avoid affecting the workloads on existing instances, we use the [`mooncake-transfer-engine`](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#use-python-package) to P2P send weights from CPUs in existing instances to GPUs in new instances. See `_update_per_bucket_p2p`.
 
 ### Optimized Weight Broadcast
-In the *Broadcast* implementation, the checkpoint-engine holds references to sharded weights in CPU memory, and need to efficiently broadcast them to a cluster of inference instances, often under a different sharding pattern. 
+In the *Broadcast* implementation, the checkpoint-engine holds references to sharded weights in CPU memory, and need to efficiently broadcast them to a cluster of inference instances, often under a different sharding pattern.
 We arrange the data transfer into 3 stages:
 1. H2D: moving weights to GPU memory. These weights may come from disk or the training engine.
 2. broadcast: broadcast among checkpoint engine workers; the data results in a CUDA IPC buffer shared with inference engine.
@@ -50,9 +50,9 @@ Pipelining naturally requires more GPU memory. When memory is not enough, checkp
 All results above are tested by [`examples/update.py`](./examples/update.py) and use [vLLM v0.10.2rc1](https://github.com/vllm-project/vllm/tree/v0.10.2rc1) as inference engine. Some notes:
 
 * FP8 test needs additional vLLM patches, see [FP8 quantization](#fp8-quantization).
-* Device Info: we tested various combination of devices and paralleism setups. For exmaple, a 256-GPU TP16 setup means that we deploy 16 vLLM instances, each with 16-way tensor parallelism.
+* Device Info: we tested various combination of devices and parallelism setups. For example, a 256-GPU TP16 setup means that we deploy 16 vLLM instances, each with 16-way tensor parallelism.
 * Since update duration is related to IPC bucket size, we provide the bucket size in the table.
-* The P2P time were tested for updating no more than two nodes (16 GPUs) (`ParameterServer.update(ranks=range(0, 16))`) out of the entire cluster. 
+* The P2P time were tested for updating no more than two nodes (16 GPUs) (`ParameterServer.update(ranks=range(0, 16))`) out of the entire cluster.
 
 ## Installation
 
@@ -110,7 +110,7 @@ torchrun --nproc-per-node 8 examples/update.py --update-method all --checkpoint-
 
 ### Reuse weights from existing instances
 
-New checkpoint-engine instances can join existing instances and reuse their weights. This is simple to achieve. 
+New checkpoint-engine instances can join existing instances and reuse their weights. This is simple to achieve.
 
 First, start the existing instances with `--save-metas-file global_metas.pkl` to save global metas to a file and use `--sleep-time 300` to make sure they stay alive.
 
@@ -127,7 +127,7 @@ torchrun --nproc-per-node 8 examples/update.py --load-metas-file global_metas.pk
 
 ### FP8 quantization
 
-FP8 quantization currently do not natively work in vLLM when updating weights. 
+FP8 quantization currently do not natively work in vLLM when updating weights.
 We provide a simple patch in [`patches/vllm_fp8.patch`](./patches/vllm_fp8.patch) to handle the correct weight update.
 Notice this patch is only tested in DeepSeek-V3.1 and Kimi-K2. Other models may meet some compatible issues.
 
