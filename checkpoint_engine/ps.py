@@ -4,13 +4,11 @@ import ctypes
 import os
 import pickle
 import random
-import socket
 import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import timedelta
-from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Any, BinaryIO, NamedTuple
 
 import httpx
@@ -22,6 +20,8 @@ from loguru import logger
 from pydantic import BaseModel, PlainSerializer, PlainValidator, WithJsonSchema
 from safetensors.torch import safe_open
 from torch.multiprocessing.reductions import reduce_tensor
+
+from checkpoint_engine.device_utils import DeviceManager, get_ip, npu_generate_uuid
 
 
 if TYPE_CHECKING:
@@ -254,26 +254,14 @@ def _concat_tp_weights(
     return torch.cat([w for w in tp_weights], dim=tp_concat_dim)
 
 
-def _get_physical_gpu_id(device_index: int | None = None) -> str:
+def _get_physical_gpu_id(device_manager: DeviceManager, device_index: int | None = None) -> str:
     try:
-        return f"GPU-{torch.cuda.get_device_properties(device_index).uuid!s}"
+        if device_manager.device_type == "npu":
+            return f"NPU-{npu_generate_uuid()}"
+        else:
+            return f"GPU-{device_manager.device_module.get_device_properties(device_index).uuid!s}"
     except AssertionError as e:
         raise ValueError(f"fail to get physical gpu id {device_index}") from e
-
-
-@lru_cache(maxsize=1)
-def _get_ip() -> str:
-    try:
-        # try to get ip from network interface
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception as e:  # noqa: BLE001
-        # fallback to get ip from hostname
-        logger.warning(
-            f"fail to get ip from network interface, fallback to get ip from hostname: {e}"
-        )
-        return socket.gethostbyname(socket.gethostname())
 
 
 def _ibv_get_device_list() -> list[str]:
@@ -677,14 +665,14 @@ def _get_bcast_rank_map(world_size: int, ranks: list[int] | None) -> dict[int, i
 
 
 class P2PStore:
-    def __init__(self):
+    def __init__(self, device_manager: DeviceManager):
         from mooncake.engine import TransferEngine
 
         self.rank = int(os.getenv("RANK"))
-        gpu_count = torch.cuda.device_count()
+        gpu_count = device_manager.device_module.device_count()
         local_rank = self.rank % gpu_count
         self.device = _get_my_rdma_device(local_rank, gpu_count, _get_rdma_devices())
-        self.ip = _get_ip()
+        self.ip = get_ip()
 
         # we will start at most 8 ps processes, so we use 8 retries to avoid port conflicts in extreme cases
         retry_count = 8
@@ -761,7 +749,8 @@ class ParameterServer:
         """
         self._rank = rank or int(os.environ.get("RANK", None))
         self._world_size = world_size or int(os.environ.get("WORLD_SIZE", None))
-        self._gpu_count = gpu_count or torch.cuda.device_count()
+        self.device_manager = DeviceManager()
+        self._gpu_count = gpu_count or self.device_manager.device_module.device_count()
         self._local_rank = self._rank % self._gpu_count
         self._auto_pg = auto_pg
         self._all_hosts = []
@@ -775,7 +764,7 @@ class ParameterServer:
         assert (
             self._gpu_count is not None
             and self._gpu_count > 0
-            and self._gpu_count <= torch.cuda.device_count()
+            and self._gpu_count <= self.device_manager.device_module.device_count()
         ), self._gpu_count
         assert (
             self._mem_fraction is not None and self._mem_fraction > 0 and self._mem_fraction <= 1
@@ -788,14 +777,14 @@ class ParameterServer:
         # dict key is owner_rank, value is a bucket metas list in owner_rank
         self._current_global_parameter_metas: dict[int, MemoryBufferMetaList] = {}
         try:
-            self._p2p_store = P2PStore()
+            self._p2p_store = P2PStore(self.device_manager)
         except ImportError as e:
             logger.warning(f"[rank{self._rank}] fail to initialize p2p store due to {e}")
             self._p2p_store = None
 
         device_index = self._local_rank
-        torch.cuda.set_device(device_index)
-        self._device_uuid = _get_physical_gpu_id(device_index)
+        self.device_manager.device_module.set_device(device_index)
+        self._device_uuid = _get_physical_gpu_id(self.device_manager, device_index)
         self._rdma_device = None if self._p2p_store is None else self._p2p_store.device
 
     def _logger_rank0(self, msg: str):
@@ -885,7 +874,7 @@ class ParameterServer:
                 for x in self._memory_pool.get(checkpoint_name, [])
             ],
             p2p_store_addr=None if self._p2p_store is None else self._p2p_store.addr,
-            host_ip=_get_ip(),
+            host_ip=get_ip(),
             device_uuid=self._device_uuid,
             rdma_device=self._rdma_device or "",
         )
@@ -948,7 +937,7 @@ class ParameterServer:
             is_master=self._rank == 0,
         )
         dist.init_process_group(
-            backend="nccl",
+            backend=self.device_manager.backend,
             world_size=self._world_size,
             rank=self._rank,
             timeout=timeout,
@@ -994,12 +983,12 @@ class ParameterServer:
             if self._auto_pg:
                 dist.destroy_process_group()
 
-            torch.cuda.empty_cache()
+            self.device_manager.device_module.empty_cache()
 
             logger.info(
                 f"[rank{self._rank}] update checkpoint {checkpoint_name} with ranks {ranks} done. "
-                f"Current CUDA allocated {torch.cuda.memory_allocated() / 1024 / 1024} MB, "
-                f"reserved {torch.cuda.memory_reserved() / 1024 / 1024} MB."
+                f"Current CUDA allocated {self.device_manager.device_module.memory_allocated() / 1024 / 1024} MB, "
+                f"reserved {self.device_manager.device_module.memory_reserved() / 1024 / 1024} MB."
             )
         except Exception as e:
             logger.exception(
@@ -1023,13 +1012,15 @@ class ParameterServer:
         tensor = torch.tensor(
             [
                 # proportion of current cuda free memory bytes
-                int(float(torch.cuda.mem_get_info()[0]) * self._mem_fraction),
+                int(
+                    float(self.device_manager.device_module.mem_get_info()[0]) * self._mem_fraction
+                ),
                 # we use negative value to reuse allreduce min operation
                 # for getting the max value of zmq_addr_counter in all ranks
                 -self._zmq_addr_counter,
             ],
             dtype=torch.int64,
-            device="cuda",
+            device=self.device_manager.device_type,
         )
         dist.all_reduce(tensor, op=dist.ReduceOp.MIN)
         tensor = tensor.cpu()
@@ -1092,7 +1083,7 @@ class ParameterServer:
         assert offset == bucket.size, f"offset {offset} != bucket_size {bucket.size}"
         if owner_rank is not None:
             self._p2p_store.batch_transfer_sync_read(target_addr, buf_ptrs, remote_ptrs, lens)
-        torch.cuda.synchronize()
+        self.device_manager.device_module.synchronize()
 
     def init_process_group_for_ranks(
         self,
@@ -1199,7 +1190,7 @@ class ParameterServer:
         h2d_buffer: torch.Tensor | None = (
             None
             if disable_h2d_buffer
-            else torch.empty(bucket_size, dtype=torch.uint8, device="cuda")
+            else torch.empty(bucket_size, dtype=torch.uint8, device=self.device_manager.device_type)
         )
         # p2p store need to register h2d_buffer to let other ranks read
         if ranks:
@@ -1212,7 +1203,9 @@ class ParameterServer:
                 continue
             receiver_rank_buckets.append((owner_rank, bucket))
 
-        buffer = torch.empty(bucket_size * 2, dtype=torch.uint8, device="cuda")
+        buffer = torch.empty(
+            bucket_size * 2, dtype=torch.uint8, device=self.device_manager.device_type
+        )
         handle = reduce_tensor(buffer)
 
         buckets_by_receiver_rank: dict[int, list[H2DBucket]] = defaultdict(list)
@@ -1245,8 +1238,8 @@ class ParameterServer:
                     continue
                 bucket = _buckets[i]
                 alloc, reserved = (
-                    torch.cuda.memory_allocated() / 1024 / 1024,
-                    torch.cuda.memory_reserved() / 1024 / 1024,
+                    self.device_manager.device_module.memory_allocated() / 1024 / 1024,
+                    self.device_manager.device_module.memory_reserved() / 1024 / 1024,
                 )
                 self._logger_rank0(
                     f"[rank{self._rank}] begin to update bucket {gidx + 1}/{len(buckets)} receiver_rank {receiver_rank} in checkpoint {checkpoint_name}, bucket_size: {bucket.size / 1024 / 1024:.2f}MiB, length: {len(bucket.items)}. "
@@ -1276,7 +1269,7 @@ class ParameterServer:
         if ranks and h2d_buffer is not None:
             self._p2p_store.unregister_named_tensors([h2d_buffer_name])
 
-        torch.cuda.empty_cache()
+        self.device_manager.device_module.empty_cache()
 
 
 def _init_api(ps: ParameterServer) -> Any:
