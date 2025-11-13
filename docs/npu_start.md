@@ -11,7 +11,7 @@ To support features like IPC Buffer and Transfer Engine, the following Ascend so
 | Software    | version     |
 |-------------|-------------|
 | Ascend HDK  | \>=25.3.rc1 |
-| cann        | \>=8.3.RC1  |
+| cann        | \>=8.3.RC1  | <!-- codespell:ignore -->
 | python      | 3.11        |
 | torch       | 2.7.1       |
 | torch_npu   | 2.7.1       |
@@ -23,14 +23,14 @@ To support features like IPC Buffer and Transfer Engine, the following Ascend so
 ```angular2html
 pip install checkpoint-engine
 ```
-Using the flexible P2P implementation requires installation of the Transfer Engine. However, ascend device cannot install transfer engine via pip, requires source compilation. 
+Using the flexible P2P implementation requires installation of the Transfer Engine. However, ascend device cannot install transfer engine via pip, requires source compilation.
 
-Reference document: [Ascend Direct Transport documentation](https://github.com/kvcache-ai/Mooncake/blob/main/doc/en/ascend_direct_transport.md) 
+Reference document: [Ascend Direct Transport documentation](https://github.com/kvcache-ai/Mooncake/blob/main/doc/en/ascend_direct_transport.md)
 
 
 ## Deploy vLLM Service
 
-Since HCCL uses the default port 16666, when executing single-device multi-process tasks, you need to manually assign port to the processes. 
+Since HCCL uses the default port 16666, when executing single-device multi-process tasks, you need to manually assign port to the processes.
 Additionally, the underlying HIXL used by the Transfer Engine also defaults to port 16666 during link establishment, and currently there is no interface to modify this. Therefore, when Deploying vLLM serve, you must manually specify the port for the device via the ranktable file.
 
 **ranktable file example:**

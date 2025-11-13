@@ -1129,7 +1129,11 @@ class ParameterServer:
             master_addr, master_port, len(ranks), is_master=rank == 0, timeout=timeout
         )
         dist.init_process_group(
-            backend=self.device_manager.backend, world_size=len(ranks), rank=rank, timeout=timeout, store=store
+            backend=self.device_manager.backend,
+            world_size=len(ranks),
+            rank=rank,
+            timeout=timeout,
+            store=store,
         )
 
     def _get_addr_ptrs(self, owner_rank: int) -> tuple[str, list[tuple[int, int]]]:
@@ -1264,7 +1268,7 @@ class ParameterServer:
                 socket.recv()
                 # Issue: Currently in the Ascend, there is a deadlock during transfer engine link establishment and dist barrier.
                 # Temporary workaround: Add sleep to ensure transfer engine link establishment complere before executing dist barrier.
-                # In the future, the CANN will solve this bug.
+                # In the future, the ascend will solve this bug.
                 if self.device_manager.device_type == "npu" and ranks is not None:
                     time.sleep(1)
                 dist.barrier()
