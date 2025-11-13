@@ -1262,6 +1262,11 @@ class ParameterServer:
                 brank = bcast_rank_map[receiver_rank]
                 dist.broadcast(buffer_b, src=brank)
                 socket.recv()
+                # Issue: Currently in the Ascend, there is a deadlock during transfer engine link establishment and dist barrier.
+                # Temporary workaround: Add sleep to ensure transfer engine link establishment complere before executing dist barrier.
+                # In the future, the CANN will solve this bug.
+                if self.device_manager.device_type == "npu" and ranks is not None:
+                    time.sleep(1)
                 dist.barrier()
                 socket.send_pyobj(_to_named_tensor(bucket.items, gidx % 2 * bucket_size))
                 gidx += 1
